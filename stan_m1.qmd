@@ -1,0 +1,96 @@
+---
+jupyter: renewal_model_dj
+---
+
+```{python}
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import arviz as az
+import numpy as np
+import plotnine as p9
+import polars as pl
+import pandas as pd
+from cmdstanpy import CmdStanMCMC, CmdStanModel
+
+np.set_printoptions(suppress=True)
+pd.set_option('display.float_format', '{:.4f}'.format)
+```
+
+```{python}
+def load_data(data_dir: Path) -> dict:
+    """Load synthetic data files and assemble the Stan data dictionary."""
+    with open(data_dir / "true_parameters.json") as f:
+        params = json.load(f)
+
+    ed_visits = pl.read_csv(data_dir / "daily_ed_visits.csv")
+    infections = pl.read_csv(data_dir / "daily_infections.csv")
+    w: list[float] = params["generation_interval_pmf"]
+    pi: list[float] = params["ed_visits"]["delay_pmf"]
+    S = len(w)
+    D = len(pi)
+    L = max(D, S)
+    T = len(ed_visits)
+    y: list[int] = ed_visits["ed_visits"].to_list()
+    J: list[float] = params["pre_observation_infections"][-L:]
+    true_rt = params["true_rt"]
+
+    return {
+        "T": T,
+        "S": S,
+        "D": D,
+        "y": y,
+        "w": w,
+        "pi": pi,
+        "J": J,
+        "true_Rt" : true_rt,
+    }
+```
+
+```{python}
+import re
+def show_params(fit, names, max_rows=None):
+    s = fit.summary().round(3)
+    parts = []
+    for n in names:
+        if n.endswith('[]'):
+            base = re.escape(n[:-2])
+            parts.append(f'{base}\\[\\d+\\]')
+        else:
+            parts.append(re.escape(n))
+    pattern = '^(' + '|'.join(parts) + ')$'
+    mask = s.index.str.match(pattern)
+    display(s.loc[mask])
+```
+
+```{python}
+data_dir = Path("data/synthetic_180")
+stan_data = load_data(data_dir)
+pl.DataFrame({"key": list(stan_data.keys()), "value": list(stan_data.values())}, strict=False)
+```
+
+```{python}
+m1_stan_file = Path("stan/simple_rw_3p.stan")
+m1 = CmdStanModel(stan_file=m1_stan_file)
+```
+
+```{python}
+#| scrolled: true
+m1_fit = m1.sample(
+        data=stan_data,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
+```{python}
+show_params(m1_fit, ['lp__', 'r[]', 'sigma_rw', 'alpha', 'phi'])
+```
+
+
+
