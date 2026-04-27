@@ -27,14 +27,17 @@ parameters {
   real<lower=0> sigma_rw;         // RW innovation SD; controls smoothness of log R(t)
 
   real<lower=0, upper=1> alpha;   // ascertainment rate
-  real<lower=0> phi;              // observation noise concentration
+  real<lower=0> inv_sqrt_phi;     // 0 = Poisson; 1 = heavy overdispersion
+}
+transformed parameters {
+  real<lower=0> phi = inv(square(inv_sqrt_phi));
 }
 model {
   // Reconstruct log R(t) from initial level + scaled cumulative innovations.
   vector[T] log_r;
   log_r[1] = log_r_init;
   log_r[2:T] = log_r_init + sigma_rw * cumulative_sum(z);
-  // Renewal equation forward pass
+
   vector[T] mu;
   vector[L + T] I;
   I[1:L] = J;
@@ -47,11 +50,10 @@ model {
 
   // Priors
   alpha ~ beta(1, 100);           // low ascertainment rate
-  phi ~ lognormal(log(50), 0.4);  // less overdispersion
-
+  inv_sqrt_phi ~ normal(0, 1);
   log_r_init ~ normal(0, 0.5);    // initial R centered at 1
   z ~ std_normal();        
-  sigma_rw ~ normal(0, 0.1);      // half-normal:  small daily changes in log R
+  sigma_rw ~ normal(0, 0.5);      // half-normal
 }
 generated quantities {
   vector[T] r;

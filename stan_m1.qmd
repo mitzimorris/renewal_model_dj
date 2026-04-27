@@ -1,5 +1,16 @@
 ---
-jupyter: renewal_model_dj
+title: Simple 3-Parameter Renewal Process Model
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .qmd
+      format_name: quarto
+      format_version: '1.0'
+      jupytext_version: 1.19.1
+  kernelspec:
+    display_name: renewal_model_dj
+    language: python
+    name: renewal_model_dj
 ---
 
 ```{python}
@@ -10,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import arviz as az
+from arviz_base import from_cmdstanpy
 import numpy as np
 import plotnine as p9
 import polars as pl
@@ -19,6 +31,58 @@ from cmdstanpy import CmdStanMCMC, CmdStanModel
 np.set_printoptions(suppress=True)
 pd.set_option('display.float_format', '{:.4f}'.format)
 ```
+
+```{python}
+def plot_rt_posterior(
+    rt,
+    true_rt=None,
+    interval: float = 0.90,
+    title: str = "Posterior Rt with 90% interval",
+):
+    alpha = (1 - interval) / 2
+    q_low = alpha
+    q_high = 1 - alpha
+
+    time = rt.coords["time"].values
+
+    rt_df = pd.DataFrame(
+        {
+            "day": time,
+            "median": rt.quantile(0.50, dim=["chain", "draw"]).values,
+            "q_low": rt.quantile(q_low, dim=["chain", "draw"]).values,
+            "q_high": rt.quantile(q_high, dim=["chain", "draw"]).values,
+        }
+    )
+
+    plot = (
+        p9.ggplot(rt_df, p9.aes(x="day"))
+        + p9.geom_ribbon(
+            p9.aes(ymin="q_low", ymax="q_high"),
+            fill="steelblue",
+            alpha=0.25,
+        )
+        + p9.geom_line(
+            p9.aes(y="median"),
+            color="darkblue",
+            size=1,
+        )
+        + p9.labs(x="Day", y="Rt", title=title)
+    )
+
+    if true_rt is not None:
+        true_rt_df = pd.DataFrame({"day": time, "true_Rt": true_rt})
+        plot = plot + p9.geom_line(
+            data=true_rt_df,
+            mapping=p9.aes(x="day", y="true_Rt"),
+            color="black",
+            linetype="dashed",
+            size=0.8,
+        )
+
+    return plot
+```
+
+Load synthetic data, assemble inputs into data dictionary passed to CmdStanModel's `sample` method.
 
 ```{python}
 def load_data(data_dir: Path) -> dict:
@@ -51,25 +115,66 @@ def load_data(data_dir: Path) -> dict:
 ```
 
 ```{python}
-import re
-def show_params(fit, names, max_rows=None):
-    s = fit.summary().round(3)
-    parts = []
-    for n in names:
-        if n.endswith('[]'):
-            base = re.escape(n[:-2])
-            parts.append(f'{base}\\[\\d+\\]')
-        else:
-            parts.append(re.escape(n))
-    pattern = '^(' + '|'.join(parts) + ')$'
-    mask = s.index.str.match(pattern)
-    display(s.loc[mask])
-```
-
-```{python}
 data_dir = Path("data/synthetic_180")
 stan_data = load_data(data_dir)
 pl.DataFrame({"key": list(stan_data.keys()), "value": list(stan_data.values())}, strict=False)
+```
+
+We start with a simple model that estimates `log_rt` - the time-varying renewal coefficient, `alpha` - the ascertainment rate, and `phi` - the amount of overdispersion in the data.
+
+```
+// simple renewal model
+// infer rt,  ascertainment rate, and overdispersion
+// random walk prior on time-varying renewal process
+// one source of observations
+// fixed estimates for infection, observational delay distributions
+// initial infections provided as data
+data {
+  // observational data
+  int<lower=0> T;                // total days
+  int<lower=0> S;                // generation interval length
+  int<lower=0> D;                // delay distribution length
+  array[T] int<lower=0> y;       // observed events
+  simplex[S] w;                  // generation interval
+  simplex[D] pi;                 // delay distribution
+  vector<lower=0>[max(D, S)] J;  // infections at time t < 0
+}
+transformed data {
+  int<lower=0> L = max(D, S);      // max lookback
+  simplex[S] w_rev = reverse(w);   // rearrange for convolution
+  simplex[D] pi_rev = reverse(pi);
+}
+parameters {
+  vector[T] log_r;                // time-varying reproduction number (log scale)
+  real<lower=0, upper=1> alpha;   // ascertainment rate
+  real<lower=0> inv_sqrt_phi;     // 0 = Poisson; 1 = heavy overdispersion
+  real<lower=0> sigma_rw;         // temporal smoothness
+}
+transformed parameters {
+  real<lower=0> phi = inv(square(inv_sqrt_phi));
+}
+model {
+  vector[T] r = exp(log_r);
+  vector[T] mu;
+  vector[L + T] I;
+  I[1:L] = J;
+  for (t in 1:T) {
+    int lpt = L + t;
+    I[lpt] = r[t] * dot_product(I[lpt - S:lpt - 1], w_rev);
+    mu[t] = alpha * dot_product(I[lpt - D + 1:lpt], pi_rev);
+  }
+  y ~ neg_binomial_2(mu, phi);
+
+  // priors on all parameters
+  alpha ~ beta(1, 100);
+  inv_sqrt_phi ~ normal(0, 1);
+  log_r[1] ~ normal(0, 0.5);          // initial R centered at 1
+  log_r[2:T] ~ normal(log_r[1:T-1], sigma_rw);  // RW1 prior on r
+  sigma_rw ~ normal(0, 0.1);
+}
+generated quantities {
+  vector[T] r = exp(log_r);
+}  
 ```
 
 ```{python}
@@ -77,20 +182,136 @@ m1_stan_file = Path("stan/simple_rw_3p.stan")
 m1 = CmdStanModel(stan_file=m1_stan_file)
 ```
 
+Fit the model
+
 ```{python}
-#| scrolled: true
 m1_fit = m1.sample(
         data=stan_data,
         chains=4,
         parallel_chains=4,
         seed=42,
-        iter_sampling=2000,
     )
 ```
 
+Inspect estimates via ArviZ 1.0.
+Create an `idata` object that contains posterior samples as well as observational data.
+
 ```{python}
-show_params(m1_fit, ['lp__', 'r[]', 'sigma_rw', 'alpha', 'phi'])
+time = np.arange(stan_data["T"])
+m1_idata = from_cmdstanpy(
+    posterior=m1_fit,
+    coords={"time": time},
+    dims={"r": ["time"],"log_r": ["time"]},
+    observed_data={
+        "ed_visits": np.asarray(stan_data["y"]),
+        "true_Rt": np.asarray(stan_data["true_Rt"]),
+    },
+)
+m1_idata
 ```
 
+```{python}
+az.summary(m1_idata, var_names=["r", "log_r"])
+```
 
+Visualize the results
 
+```{python}
+plot_rt_posterior(m1_idata.posterior["r"], stan_data["true_Rt"])
+```
+
+Compare these fits to the atemporal model:
+
+```stan
+// simple renewal model
+// one source of observations
+// fixed estimates for infection, observational delay distributions
+data {
+  // observational data
+  int<lower=0> T;                // total days
+  int<lower=0> S;                // generation interval length
+  int<lower=0> D;                // delay distribution length
+  array[T] int<lower=0> y;       // observed events
+
+  // estimated params - move to params for Rubin-style
+  simplex[S] w;                  // generation interval
+  simplex[D] pi;                 // delay distribution
+  vector<lower=0>[max(D, S)] J;  // infections at time t < 0
+}
+transformed data {
+  int<lower=0> L = max(D, S);      // max lookback
+  simplex[S] w_rev = reverse(w);   // required for convolution
+  simplex[D] pi_rev = reverse(pi);
+  real eps = 1e-9;
+}
+parameters {
+  vector[T] log_r;                // time-varying reproduction number (log scale)
+  real<lower=0, upper=1> alpha;   // ascertainment rate
+  real<lower=0> inv_sqrt_phi;     // 0 = Poisson; 1 = heavy overdispersion
+}
+transformed parameters {
+  real<lower=0> phi = inv(square(inv_sqrt_phi));
+}
+model {
+  vector[T] r = exp(log_r);
+  vector[T] mu;
+  vector[L + T] I;
+  I[1:L] = J;
+  for (t in 1:T) {
+    int lpt = L + t;
+    I[lpt] = r[t] * dot_product(I[lpt - S:lpt - 1], w_rev);
+    mu[t] = alpha * dot_product(I[lpt - D:lpt - 1], pi_rev) + eps;
+  }
+  y ~ neg_binomial_2(mu, phi);
+
+  // priors on all parameters
+  alpha ~ beta(1, 100);            // skewed towards small values
+  inv_sqrt_phi ~ normal(0, 1);
+  log_r ~ normal(0, 0.5);          // R centered at 1 - no temporal trends
+}
+generated quantities {
+  vector[T] r = exp(log_r);
+}  
+```
+
+Compile the model
+
+```{python}
+m2_stan_file = Path("stan/atemporal.stan")
+m2 = CmdStanModel(stan_file=m2_stan_file)
+```
+
+Fit the model
+
+```{python}
+m2_fit = m2.sample(
+        data=stan_data,
+        chains=4,
+        parallel_chains=4,
+        max_treedepth=11,
+        seed=42,
+    )
+```
+
+Inspect estimates via ArviZ 1.0.
+Create an `idata` object that contains posterior samples as well as observational data.
+
+```{python}
+time = np.arange(stan_data["T"])
+m2_idata = from_cmdstanpy(
+    posterior=m2_fit,
+    coords={"time": time},
+    dims={"r": ["time"],"log_r": ["time"]},
+    observed_data={
+        "ed_visits": np.asarray(stan_data["y"]),
+        "true_Rt": np.asarray(stan_data["true_Rt"]),
+    },
+)
+az.summary(m2_idata, var_names=["r", "log_r"])
+```
+
+Visualize the results
+
+```{python}
+plot_rt_posterior(m2_idata.posterior["r"], stan_data["true_Rt"])
+```

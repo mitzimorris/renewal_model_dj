@@ -20,21 +20,30 @@ transformed data {
   real eps = 1e-9;
 }
 parameters {
-  vector<lower=0>[T] r;
-  real<lower=0, upper=1> alpha;
-  real<lower=0> phi;
+  vector[T] log_r;                // time-varying reproduction number (log scale)
+  real<lower=0, upper=1> alpha;   // ascertainment rate
+  real<lower=0> inv_sqrt_phi;     // 0 = Poisson; 1 = heavy overdispersion
+}
+transformed parameters {
+  real<lower=0> phi = inv(square(inv_sqrt_phi));
 }
 model {
+  vector[T] r = exp(log_r);
+  vector[T] mu;
   vector[L + T] I;
   I[1:L] = J;
-  vector[T] mu;
   for (t in 1:T) {
     int lpt = L + t;
     I[lpt] = r[t] * dot_product(I[lpt - S:lpt - 1], w_rev);
     mu[t] = alpha * dot_product(I[lpt - D:lpt - 1], pi_rev) + eps;
   }
-  alpha ~ beta(1, 10);            // skewed towards small values
-  r ~ lognormal(0, 0.5);          // R centered at 1 - no temporal trends
-  phi ~ lognormal(log(50), 0.4);  // median concentration - expect less overdispersion
   y ~ neg_binomial_2(mu, phi);
+
+  // priors on all parameters
+  alpha ~ beta(1, 100);            // skewed towards small values
+  inv_sqrt_phi ~ normal(0, 1);
+  log_r ~ normal(0, 0.5);          // R centered at 1 - no temporal trends
 }
+generated quantities {
+  vector[T] r = exp(log_r);
+}  

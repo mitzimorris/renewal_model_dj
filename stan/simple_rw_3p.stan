@@ -29,13 +29,12 @@ transformed parameters {
   real<lower=0> phi = inv(square(inv_sqrt_phi));
 }
 model {
-  vector[T] r = exp(log_r);
   vector[T] mu;
   vector[L + T] I;
   I[1:L] = J;
   for (t in 1:T) {
     int lpt = L + t;
-    I[lpt] = r[t] * dot_product(I[lpt - S:lpt - 1], w_rev);
+    I[lpt] = exp(log_r[t]) * dot_product(I[lpt - S:lpt - 1], w_rev);
     mu[t] = alpha * dot_product(I[lpt - D + 1:lpt], pi_rev);
   }
   y ~ neg_binomial_2(mu, phi);
