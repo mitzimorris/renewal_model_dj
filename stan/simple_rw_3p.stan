@@ -44,7 +44,7 @@ model {
   inv_sqrt_phi ~ normal(0, 1);
   log_r[1] ~ normal(0, 0.5);          // initial R centered at 1
   log_r[2:T] ~ normal(log_r[1:T-1], sigma_rw);  // RW1 prior on r
-  sigma_rw ~ normal(0, 0.1);
+  sigma_rw ~ normal(0, 0.5);
 }
 generated quantities {
   vector[T] r = exp(log_r);
