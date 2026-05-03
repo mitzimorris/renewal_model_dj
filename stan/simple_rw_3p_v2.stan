@@ -53,15 +53,12 @@ transformed data {
   int<lower=0> L = max(D, S);      // max lookback
   simplex[S] w_rev = reverse(w);   // rearrange for convolution
   simplex[D] pi_rev = reverse(pi);
-
   vector[L] J;
   real r0_approx = solve_growth_rate(rt0, w);
-  print(r0_approx);
   for (j in 1:L) {
     int seed_time = j - L - 1;  // maps index j to pre-observation time -L, ..., -1
     J[j] = population_size * i0_scale * exp(r0_approx * seed_time);
   }
-  print("J ", J);
 }
 parameters {
   vector[T] log_r;                // time-varying reproduction number (log scale)
