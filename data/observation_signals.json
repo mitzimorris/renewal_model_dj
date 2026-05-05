@@ -21,7 +21,7 @@
         0.01312726,
         0.00814594
       ],
-      "negbinom_concentration": 50.0
+      "negbinom_concentration": 20.0
     },
     {
       "name": "hospitalizations",
@@ -71,7 +71,7 @@
         0.00002,
         0.00001
       ],
-      "negbinom_concentration": 100.0
+      "negbinom_concentration": 50.0
     }
   ]
 }

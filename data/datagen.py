@@ -36,6 +36,8 @@ ROOT: Path = Path(__file__).resolve().parent
 DEFAULT_SIGNAL_CONFIG: Path = ROOT / "observation_signals.json"
 
 RNG_SEED: int = 20240101
+RT_NOISE_SEED: int = 20240102
+RT_NOISE_SD: float = 0.1
 POPULATION: int = 39_512_223
 
 GEN_INT_PMF: npt.NDArray[np.float64] = np.array(
@@ -264,9 +266,13 @@ def r_approx_from_R(
     return float(brentq(residual, -2.0, 2.0))
 
 
-def build_true_rt(n_days: int) -> npt.NDArray[np.float64]:
+def build_true_rt(
+    n_days: int,
+    rt_noise_sd: float = 0.0,
+    rt_noise_seed: int | None = None,
+) -> npt.NDArray[np.float64]:
     """
-    Build a piecewise-linear true R(t) trajectory.
+    Build a piecewise-linear true R(t) trajectory, optionally with noise.
 
     Phases: decline from 1.2 to 0.8, rise from 0.8 to 1.15,
     decline from 1.15 to 0.85. Each phase has equal length.
@@ -275,6 +281,12 @@ def build_true_rt(n_days: int) -> npt.NDArray[np.float64]:
     ----------
     n_days : int
         Number of days in the trajectory. Must be divisible by 3.
+    rt_noise_sd : float
+        Standard deviation of independent Gaussian noise added to each
+        R(t) value. Use 0 for no noise.
+    rt_noise_seed : int or None
+        Seed for the R(t) noise generator. Required when ``rt_noise_sd``
+        is positive.
 
     Returns
     -------
@@ -283,13 +295,23 @@ def build_true_rt(n_days: int) -> npt.NDArray[np.float64]:
     """
     if n_days % N_RT_PHASES != 0:
         raise ValueError(f"n_days must be divisible by {N_RT_PHASES}; got {n_days}")
+    if rt_noise_sd < 0:
+        raise ValueError(f"rt_noise_sd must be nonnegative; got {rt_noise_sd}")
+    if rt_noise_sd > 0 and rt_noise_seed is None:
+        raise ValueError("rt_noise_seed is required when rt_noise_sd is positive")
+
     phase_days = n_days // N_RT_PHASES
-    return np.concatenate(
+    rt = np.concatenate(
         [
             np.linspace(start, end, phase_days, endpoint=False)
             for start, end in RT_PHASE_ENDPOINTS
         ]
     )
+    if rt_noise_sd > 0:
+        rng = np.random.default_rng(rt_noise_seed)
+        rt = rt + rng.normal(loc=0.0, scale=rt_noise_sd, size=rt.shape)
+    print(rt)
+    return rt
 
 
 def run_renewal(
@@ -410,7 +432,7 @@ def generate(
     rng = np.random.default_rng(RNG_SEED)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    true_rt = build_true_rt(n_days)
+    true_rt = build_true_rt(n_days, RT_NOISE_SD, RT_NOISE_SEED)
     phase_days = n_days // N_RT_PHASES
     i0_total = I0_PER_CAPITA * POPULATION
 
@@ -461,6 +483,8 @@ def generate(
         "n_days": n_days,
         "n_init": n_init,
         "rng_seed": RNG_SEED,
+        "rt_noise_seed": RT_NOISE_SEED,
+        "rt_noise_sd": RT_NOISE_SD,
         "generation_interval_pmf": GEN_INT_PMF.tolist(),
         "i0_per_capita": I0_PER_CAPITA,
         "rt_trajectory": {

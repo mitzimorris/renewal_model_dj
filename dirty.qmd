@@ -1,5 +1,5 @@
 ---
-title: Simple 3-Parameter Renewal Process Model
+title: Comparing Centered vs. Non-Centered Parameterizations
 jupyter:
   jupytext:
     text_representation:
@@ -82,10 +82,6 @@ def plot_rt_posterior(
     return plot
 ```
 
-### Load Datasets
-
-Load synthetic data, assemble inputs into data dictionary passed to CmdStanModel's `sample` method.
-
 ```{python}
 def load_data(data_dir: Path, signal_name: str = "ed_visits") -> dict:
     """Load synthetic data files and assemble the Stan data dictionary."""
@@ -112,84 +108,72 @@ def load_data(data_dir: Path, signal_name: str = "ed_visits") -> dict:
         "w": w,
         "pi": pi,
         "J": params["pre_observation_infections"][-L:],
-        "rt0": params["true_rt"][0],
-    	"i0_scale": 0.0005,
-        "population_size": 39512223,
-    	"true_Rt": params["true_rt"],  # used for plotting only
+        "true_Rt": params["true_rt"],
     }
 ```
 
 ```{python}
-stan_data_189 = load_data(Path("data/synth_hosp_ed_189"))
-pl.DataFrame({"key": list(stan_data_189.keys()), "value": list(stan_data_189.values())}, strict=False)
-```
+def viz_data(stan_data: dict):
+    """Plot true R(t) and observed counts from a Stan data dictionary."""
+    plot_df = pd.DataFrame(
+        {
+            "time": list(range(1, stan_data["T"] + 1)),
+            "Observed count": stan_data["y"],
+            "True R(t)": stan_data["true_Rt"],
+        }
+    ).melt(
+        id_vars="time",
+        var_name="series",
+        value_name="value",
+    )
 
-The model `stan/simple_rw_3p_v2.stan` estimates 3 parameters:
+    plot_df["series"] = pd.Categorical(
+        plot_df["series"],
+        categories=["True R(t)", "Observed count"],
+        ordered=True,
+    )
 
-- `log_rt` - the time-varying renewal coefficient
-- `alpha` - the ascertainment rate
-- `phi` - the amount of overdispersion in the data.
-
-given
-
-- observational data `y` - daily ED visits
-- simplex `w` - the latent infection generation interval - the discretized non-zero probability of a new infection
-- simplex `pi` - the observation delay distribusion - the discertized non-zero probability of observing an infection
-
-- real `rt0` - the estimated reproduction number at time 0
-- real `i0_scale` - the extrapolated population-level at time 0
-
-These last 2 inputs are necessary to resolve the potential non-identifiability of `log_rt` and `alpha`.
-
-```{python}
-m1_stan_file = Path("stan/simple_rw_3p_v2.stan")
-m1 = CmdStanModel(stan_file=m1_stan_file)
-
-# format_stan_file(m1_stan_file)
-```
-
-### Fit 3-parameter model to synthetic data
-
-We fit the model to the 189 day synthetic dataset.
-
-```{python}
-fit_189 = m1.sample(
-        data=stan_data_189,
-        chains=4,
-        parallel_chains=4,
-        seed=42,
-        iter_sampling=2000,
+    return (
+        p9.ggplot(plot_df, p9.aes(x="time", y="value"))
+        + p9.geom_line()
+        + p9.facet_wrap("~series", ncol=1, scales="free_y")
+        + p9.labs(x="Time", y=None)
     )
 ```
 
-We use ArivZ to check the fit
+### Load Datasets
+
+Load synthetic data, assemble inputs into data dictionary passed to CmdStanModel's `sample` method.
 
 ```{python}
-time_189 = np.arange(stan_data_189["T"])
-fit_189_idata = from_cmdstanpy(
-    posterior=fit_189,
-    coords={"time": time_189},
-    dims={"r": ["time"],"log_r": ["time"]},
-    observed_data={
-        "ed_visits": np.asarray(stan_data_189["y"]),
-        "true_Rt": np.asarray(stan_data_189["true_Rt"]),
-    },
-)
-az.summary(fit_189_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+dirty_189 = load_data(Path("data/dirty_hosp_ed_189"))
 ```
 
 ```{python}
-plot_rt_posterior(fit_189_idata.posterior["r"], true_rt=stan_data_189["true_Rt"])
+viz_data(dirty_189)
 ```
+
+### Compile models
+
+We compile the centered and non-centered parameterizations.
 
 ```{python}
 cp_stan_file = Path("stan/simple_rw_3p.stan")
 cp = CmdStanModel(stan_file=cp_stan_file)
+format_stan_file(cp_stan_file)
 ```
 
 ```{python}
-cp_189_fit = cp.sample(
-        data=stan_data_189,
+ncp_stan_file = Path("stan/simple_rw_3p_nc.stan")
+ncp = CmdStanModel(stan_file=ncp_stan_file)
+format_stan_file(ncp_stan_file)
+```
+
+(note - we compute log_r twice - faster than doing this once in transformed parameters because of I/O overhead)
+
+```{python}
+cp_dirty_189_fit = cp.sample(
+        data=dirty_189,
         chains=4,
         parallel_chains=4,
         seed=42,
@@ -198,20 +182,30 @@ cp_189_fit = cp.sample(
 ```
 
 ```{python}
-cp_189_idata = from_cmdstanpy(
-    posterior=cp_189_fit,
+time_189 = np.arange(dirty_189["T"])
+cp_dirty_189_idata = from_cmdstanpy(
+    posterior=cp_dirty_189_fit,
     coords={"time": time_189},
     dims={"r": ["time"],"log_r": ["time"]},
     observed_data={
-        "ed_visits": np.asarray(stan_data_189["y"]),
-        "true_Rt": np.asarray(stan_data_189["true_Rt"]),
+        "ed_visits": np.asarray(dirty_189["y"]),
+        "true_Rt": np.asarray(dirty_189["true_Rt"]),
     },
 )
-az.summary(cp_189_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+az.summary(cp_dirty_189_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
 ```
-
-We plot the estimated daily Rt against the Rt values used to generate the synthetic daily observations.
 
 ```{python}
-plot_rt_posterior(cp_189_idata.posterior["r"], true_rt=stan_data_189["true_Rt"])
+plot_rt_posterior(cp_dirty_189_idata.posterior["r"], true_rt=dirty_189["true_Rt"])
 ```
+
+```{python}
+ncp_dirty_189_fit = ncp.sample(
+        data=dirty_189,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
