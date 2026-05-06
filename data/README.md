@@ -9,7 +9,7 @@ recovery checks.
 From the repository root:
 
 ```
-python data/datagen.py 26
+uv run python data/datagen.py 26
 ```
 
 The positional argument is the requested number of weeks. It must be at
@@ -21,14 +21,14 @@ By default, output is written to `data/synthetic_<n_days>/`. You can
 override this with `--output-dir`:
 
 ```
-python data/datagen.py 26 --output-dir data/my_synthetic_run
+uv run python data/datagen.py 26 --output-dir data/my_synthetic_run
 ```
 
 Observation streams are configured in `data/observation_signals.json`
 by default. Use `--signal-config` to provide another JSON file:
 
 ```
-python data/datagen.py 26 --signal-config data/my_signals.json
+uv run python data/datagen.py 26 --signal-config data/my_signals.json
 ```
 
 Each run writes:
@@ -59,8 +59,10 @@ signal:
 }
 ```
 
-Signal names must be lowercase snake_case and filesystem-safe. Delay
-PMFs must be nonnegative and sum to 1.0 within tolerance.
+Signal names must be lowercase snake_case and filesystem-safe.
+Ascertainment rates and negative-binomial concentration parameters must
+be positive. Delay PMFs must be nonnegative and sum to 1.0 within
+tolerance.
 
 ## R(t) schedule
 

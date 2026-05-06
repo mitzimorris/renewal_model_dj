@@ -3,9 +3,11 @@
 Generate synthetic observation data from a known R(t).
 
 This script defines R(t) directly, runs a discrete renewal equation
-forward, and convolves with each configured observation delay PMF to
-produce NegativeBinomial-distributed observation streams. All true
-parameters are saved alongside the synthetic observations for posterior
+forward to produce latent infections, and convolves those infections
+with each configured observation delay PMF to produce
+NegativeBinomial-distributed observation streams. The latent infections,
+R(t), warm-up infections, generation-interval PMF, and signal-config
+path are saved alongside the synthetic observations for posterior
 recovery checks.
 
 Outputs (under ``synthetic_<n_days>`` by default):
@@ -314,7 +316,9 @@ def run_renewal(
     gen_int : np.ndarray
         Generation interval PMF (sums to 1).
     i0_total : float
-        Infections on the last day of the seed period.
+        Target infections on the first observation day. The seed period
+        is constructed so the first renewal update is approximately
+        anchored at this value when ``rt[0]`` is constant.
     n_init : int
         Number of seed days before day 0 of the observation window.
 
