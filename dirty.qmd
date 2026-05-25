@@ -22,6 +22,7 @@ from typing import Any
 
 import arviz as az
 from arviz_base import from_cmdstanpy
+import matplotlib.pyplot as plt
 import numpy as np
 import plotnine as p9
 import polars as pl
@@ -30,6 +31,10 @@ from cmdstanpy import CmdStanMCMC, CmdStanModel, format_stan_file
 
 np.set_printoptions(suppress=True)
 pd.set_option('display.float_format', '{:.4f}'.format)
+
+%matplotlib inline
+
+STAN_INCLUDE_PATHS = [Path("stan").resolve()]
 ```
 
 ```{python}
@@ -141,17 +146,38 @@ def viz_data(stan_data: dict):
     )
 ```
 
+```{python}
+def plot_z_vs_scalar(idata, scalar="sigma_rw", z_times=(1, 7, 14, 28, 56)):
+      posterior = idata.posterior
+      sample_stats = idata.sample_stats
+
+      x = posterior[scalar].stack(sample=("chain", "draw")).values
+      div = sample_stats["diverging"].stack(sample=("chain", "draw")).values.astype(bool)
+
+      fig, axes = plt.subplots(1, len(z_times), figsize=(3.2 * len(z_times), 3), sharex=True)
+
+      for ax, t in zip(axes, z_times):
+          z = (
+              posterior["z"]
+              .sel(innovation_time=t)
+              .stack(sample=("chain", "draw"))
+              .values
+          )
+
+          ax.scatter(x[~div], z[~div], s=6, alpha=0.25, color="0.4")
+          ax.scatter(x[div], z[div], s=5, alpha=0.9, color="orange")
+          ax.set_title(f"z[{t}]")
+          ax.set_xlabel(scalar)
+
+      axes[0].set_ylabel("z")
+      fig.tight_layout()
+      return fig
+```
+
 ### Load Datasets
 
 Load synthetic data, assemble inputs into data dictionary passed to CmdStanModel's `sample` method.
 
-```{python}
-dirty_189 = load_data(Path("data/dirty_hosp_ed_189"))
-```
-
-```{python}
-viz_data(dirty_189)
-```
 
 ### Compile models
 
@@ -160,16 +186,179 @@ We compile the centered and non-centered parameterizations.
 ```{python}
 cp_stan_file = Path("stan/simple_rw_3p.stan")
 cp = CmdStanModel(stan_file=cp_stan_file)
-format_stan_file(cp_stan_file)
+format_stan_file(
+    cp_stan_file,
+    canonicalize="includes",
+    stanc_options={"include-paths": STAN_INCLUDE_PATHS},
+)
 ```
 
 ```{python}
 ncp_stan_file = Path("stan/simple_rw_3p_nc.stan")
 ncp = CmdStanModel(stan_file=ncp_stan_file)
-format_stan_file(ncp_stan_file)
+format_stan_file(
+    ncp_stan_file,
+    canonicalize="includes",
+    stanc_options={"include-paths": STAN_INCLUDE_PATHS},
+)
 ```
 
 (note - we compute log_r twice - faster than doing this once in transformed parameters because of I/O overhead)
+
+### 12 weeks / 84 days
+
+```{python}
+dirty_84 = load_data(Path("data/dirty_84"))
+```
+
+```{python}
+viz_data(dirty_84)
+```
+
+```{python}
+cp_dirty_84_fit = cp.sample(
+        data=dirty_84,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
+```{python}
+time_84 = np.arange(dirty_84["T"])
+cp_dirty_84_idata = from_cmdstanpy(
+    posterior=cp_dirty_84_fit,
+    coords={"time": time_84},
+    dims={"r": ["time"],"log_r": ["time"]},
+    observed_data={
+        "ed_visits": np.asarray(dirty_84["y"]),
+        "true_Rt": np.asarray(dirty_84["true_Rt"]),
+    },
+)
+az.summary(cp_dirty_84_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+```
+
+```{python}
+plot_rt_posterior(cp_dirty_84_idata.posterior["r"], true_rt=dirty_84["true_Rt"])
+```
+
+```{python}
+ncp_dirty_84_fit = ncp.sample(
+        data=dirty_84,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
+```{python}
+innovation_time_84 = np.arange(1, dirty_84["T"])
+
+ncp_dirty_84_idata = from_cmdstanpy(
+    posterior=ncp_dirty_84_fit,
+    coords={
+        "time": time_84,
+        "innovation_time": innovation_time_84,
+    },
+    dims={
+        "r": ["time"],
+        "log_r": ["time"],
+        "z": ["innovation_time"],
+    },
+    observed_data={
+        "ed_visits": np.asarray(dirty_84["y"]),
+        "true_Rt": np.asarray(dirty_84["true_Rt"]),
+    },
+)
+
+az.summary(ncp_dirty_84_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+```
+
+```{python}
+az.summary(cp_dirty_84_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+```
+
+```{python}
+cp_pm = az.plot_pair(
+      cp_dirty_84_idata,
+      var_names=["alpha", "inv_sqrt_phi", "sigma_rw"],
+      group="posterior",
+      marginal=True,
+      triangle="lower",
+      visuals={"divergence": True},
+      backend="matplotlib",
+)
+
+cp_pm.show()
+```
+
+```{python}
+plot_z_vs_scalar(ncp_dirty_84_idata, "sigma_rw", z_times=(1, 7, 14, 28, 56))
+```
+
+```{python}
+plot_z_vs_scalar(ncp_dirty_84_idata, "log_r_init", z_times=(1, 7, 14, 28, 56))
+```
+
+### 18 weeks / 126 days
+
+```{python}
+dirty_126 = load_data(Path("data/very_dirty_hosp_ed_126"))
+```
+
+```{python}
+viz_data(dirty_126)
+```
+
+```{python}
+cp_dirty_126_fit = cp.sample(
+        data=dirty_126,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
+```{python}
+time_126 = np.arange(dirty_126["T"])
+cp_dirty_126_idata = from_cmdstanpy(
+    posterior=cp_dirty_126_fit,
+    coords={"time": time_126},
+    dims={"r": ["time"],"log_r": ["time"]},
+    observed_data={
+        "ed_visits": np.asarray(dirty_126["y"]),
+        "true_Rt": np.asarray(dirty_126["true_Rt"]),
+    },
+)
+az.summary(cp_dirty_126_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
+```
+
+```{python}
+plot_rt_posterior(cp_dirty_126_idata.posterior["r"], true_rt=dirty_126["true_Rt"])
+```
+
+```{python}
+ncp_dirty_126_fit = ncp.sample(
+        data=dirty_126,
+        chains=4,
+        parallel_chains=4,
+        seed=42,
+        iter_sampling=2000,
+    )
+```
+
+### 26 weeks / 189 days
+
+```{python}
+dirty_189 = load_data(Path("data/dirty_hosp_ed_189"))
+```
+
+```{python}
+viz_data(dirty_189)
+```
 
 ```{python}
 cp_dirty_189_fit = cp.sample(
@@ -208,4 +397,3 @@ ncp_dirty_189_fit = ncp.sample(
         iter_sampling=2000,
     )
 ```
-

@@ -2,23 +2,10 @@
 // infer rt,  ascertainment rate, and overdispersion
 // random walk prior on time-varying renewal process
 // one source of observations
-// fixed estimates for infection, observational delay distributions
-// initial infections provided as data
-data {
-  // observational data
-  int<lower=0> T; // total days
-  int<lower=0> S; // generation interval length
-  int<lower=0> D; // delay distribution length
-  array[T] int<lower=0> y; // observed events
-  simplex[S] w; // generation interval
-  simplex[D] pi; // delay distribution
-  vector<lower=0>[max(D, S)] J; // infections at time t < 0
-}
-transformed data {
-  int<lower=0> L = max(D, S); // max lookback
-  simplex[S] w_rev = reverse(w); // rearrange for convolution
-  simplex[D] pi_rev = reverse(pi);
-}
+// fixed estimates for infection, observational delay distributions,
+// initial rt and i0_scale
+#include solve_growth_rate.stan
+#include data_blocks.stan
 parameters {
   // Non-centered parameterization works on the log scale because
   // log R(t) is unconstrained; R(t) > 0 makes additive innovations awkward.

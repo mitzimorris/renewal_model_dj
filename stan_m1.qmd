@@ -124,7 +124,7 @@ stan_data_189 = load_data(Path("data/synth_hosp_ed_189"))
 pl.DataFrame({"key": list(stan_data_189.keys()), "value": list(stan_data_189.values())}, strict=False)
 ```
 
-The model `stan/simple_rw_3p_v2.stan` estimates 3 parameters:
+The model `stan/simple_rw_3p.stan` estimates 3 parameters:
 
 - `log_rt` - the time-varying renewal coefficient
 - `alpha` - the ascertainment rate
@@ -142,7 +142,7 @@ given
 These last 2 inputs are necessary to resolve the potential non-identifiability of `log_rt` and `alpha`.
 
 ```{python}
-m1_stan_file = Path("stan/simple_rw_3p_v2.stan")
+m1_stan_file = Path("stan/simple_rw_3p.stan")
 m1 = CmdStanModel(stan_file=m1_stan_file)
 
 # format_stan_file(m1_stan_file)

@@ -30,6 +30,8 @@ from cmdstanpy import CmdStanMCMC, CmdStanModel, format_stan_file
 
 np.set_printoptions(suppress=True)
 pd.set_option('display.float_format', '{:.4f}'.format)
+
+STAN_INCLUDE_PATHS = [Path("stan").resolve()]
 ```
 
 ```{python}
@@ -157,13 +159,21 @@ We compile the centered and non-centered parameterizations.
 ```{python}
 cp_stan_file = Path("stan/simple_rw_3p.stan")
 cp = CmdStanModel(stan_file=cp_stan_file)
-format_stan_file(cp_stan_file)
+format_stan_file(
+    cp_stan_file,
+    canonicalize="includes",
+    stanc_options={"include-paths": STAN_INCLUDE_PATHS},
+)
 ```
 
 ```{python}
 ncp_stan_file = Path("stan/simple_rw_3p_nc.stan")
 ncp = CmdStanModel(stan_file=ncp_stan_file)
-format_stan_file(ncp_stan_file)
+format_stan_file(
+    ncp_stan_file,
+    canonicalize="includes",
+    stanc_options={"include-paths": STAN_INCLUDE_PATHS},
+)
 ```
 
 (note - we compute log_r twice - faster than doing this once in transformed parameters because of I/O overhead)

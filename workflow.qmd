@@ -153,22 +153,39 @@ my_data = load_data(Path("data/my_data"))
 viz_data(my_data)
 ```
 
-### Compile the model
-
-Compile the model, show model code
-
 ```{python}
-cp_stan_file = Path("stan/simple_rw_3p.stan")
-cp = CmdStanModel(stan_file=cp_stan_file)
-format_stan_file(cp_stan_file)
+!ls stan
 ```
 
 ### Run the model
 
 Fit the model, check fit
 
+### Compile the model
+
+Compile the model, show model code
+
 ```{python}
-my_fit = cp.sample(
+STAN_INCLUDE_PATHS = [Path("stan").resolve()]
+```
+
+```{python}
+ar1_stan_file = Path("stan/simple_diff_ar1_3p.stan")
+diff_ar1 = CmdStanModel(stan_file=ar1_stan_file)
+```
+
+```{python}
+!cat stan/simple_diff_ar1_3p.stan
+```
+
+```{python}
+cp_stan_file = Path("stan/simple_rw_3p.stan")
+cp = CmdStanModel(stan_file=cp_stan_file)
+format_stan_file(cp_stan_file, canonicalize="includes", stanc_options={"include-paths" : STAN_INCLUDE_PATHS})
+```
+
+```{python}
+my_fit = diff_ar1.sample(
         data=my_data,
         chains=4,
         parallel_chains=4,
@@ -194,7 +211,6 @@ az.summary(my_fit_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
 ### Visualizations
 
 Plot data and posterior inference to better assess model performance.
-
 
 ```{python}
 plot_rt_posterior(my_fit_idata.posterior["r"], true_rt=my_data["true_Rt"])

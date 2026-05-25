@@ -3,21 +3,14 @@ import jax.numpy as jnp
 import jax.random as jrd
 from jax.scipy import stats
 from jax.typing import ArrayLike
+import blackjax
 
 import json
 from pathlib import Path
 import polars as pl
 from typing import Any
 
-from util import (
-    ravelize_function,
-    make_log_density,
-    constrain,
-    positive,
-    real,
-    spec_to_pytree,
-)
-
+from util import positive, real
 from util_renewal import solve_initial_growth_rate
 
 # These are the primary exports of this module:
@@ -76,14 +69,13 @@ pre_observation_infections = (
 ## we construct a dictionary over all parameters
 params = {
     "log_r": real(shape=y.shape[0]),
-#    "alpha": cont_0_1_excl(),
-    "alpha": positive(),
+    "alpha": positive(),   # should be lower > 0, upper < 1 "alpha": cont_0_1_excl(),
     "inv_sqrt_phi": positive(),
     "sigma_rw": positive(),
 }
 
 
-# transformed parmaeters and model block
+## defining everything using jax.scipy densities
 def log_posterior(params):
     lp = 0.0
     I0 = jnp.concatenate([pre_observation_infections, jnp.zeros(T)])
@@ -121,6 +113,42 @@ def log_posterior(params):
     return lp
 
     
+## need to apply transforms
+def transform(params):
+    t_log_r = jnp.array(params["log_r"])
+    t_alpha = jnp.log(params["alpha"])
+    t_inv_sqrt_phi = jnp.log(params["inv_sqrt_phi"])
+    t_sigma_rw = jnp.log(params["sigma_rw"])
+    t_params = {
+        "log_r": t_log_r,
+        "alpha": t_alpha,
+        "inv_sqrt_phi": t_inv_sqrt_phi,
+        "sigma_rw": t_sigma_rw
+    }
+    return t_params
+
+def inv_transform(t_params):
+    log_adjust = 0.0
+    log_r = jnp.array(t_params["log_r"])
+    alpha = jnp.exp(t_params["alpha"])
+    log_adjust += t_params["alpha"]
+    inv_sqrt_phi = jnp.exp(t_params["inv_sqrt_phi"])
+    log_adjust += t_params["inv_sqrt_phi"]
+    sigma_rw = jnp.exp(t_params["sigma_rw"])
+    log_adjust += t_params["sigma_rw"]
+    params = {
+        "log_r": log_r,
+        "alpha": alpha,
+        "inv_sqrt_phi": inv_sqrt_phi,
+        "sigma_rw": sigma_rw
+    }
+    return params, log_adjust
+
+def log_posterior_transformed(t_params):
+    params, log_adjust = inv_transform(t_params)
+    log_post = log_posterior(params)
+    return log_adjust + log_post
+
 def random_init_transformed(key):
     key0, key1, key2, key3 = jrd.split(key, 4)
     t_log_r = jrd.normal(key0, shape=(y.shape[0]))
@@ -130,8 +158,56 @@ def random_init_transformed(key):
     t_params = { "log_r": t_log_r, "alpha": t_alpha, "inv_sqrt_phi": t_inv_sqrt_phi, "sigma_rw": t_sigma_rw }
     return t_params
 
+
 seed = 441_582
 key = jrd.key(seed)
 init_key, nuts_key = jrd.split(key, 2)
 t_params_init = random_init_transformed(init_key)
 print(f"{t_params_init=}")
+
+params_init, log_adjust = inv_transform(t_params_init)
+t_params_init_round_trip = transform(params_init)
+
+print(f"{log_adjust=}")
+print(f"{t_params_init_round_trip=}")
+
+
+def random_markov_chain(key, kernel, init_state, num_draws):
+    @jax.jit
+    def one_step(state, key):
+        state, _ = kernel(key, state)
+        return state, state
+    keys = jrd.split(key, num_draws)
+    _, states = jax.lax.scan(one_step, init_state, keys)
+    return states
+
+def nuts_sample(key, log_density, init_position, num_draws):
+    init_key, warmup_key, sample_key = jrd.split(key, 3)
+    warmup = blackjax.window_adaptation(blackjax.nuts, log_density)
+    (state, params), _ = warmup.run(warmup_key, init_position, num_steps=num_draws)
+    kernel = blackjax.nuts(log_density, **params).step
+    states = random_markov_chain(sample_key, kernel, state, num_draws)
+    draws = states.position
+    return draws
+
+num_draws = 1_000
+
+t_draws = nuts_sample(nuts_key, log_posterior_transformed, t_params_init, num_draws)
+
+def inv_transform_draws(t_draws):
+    draws = {
+        "log_r" : t_draws["log_r"],
+        "alpha": t_draws["alpha"],
+        "inv_sqrt_phi": t_draws["inv_sqrt_phi"],
+        "sigma_rw": jnp.exp(t_draws["sigma_rw"]),
+    }
+    return draws
+
+draws = inv_transform_draws(t_draws)
+
+import functools
+
+posterior_means = jax.tree.map(functools.partial(jnp.mean, axis=0), draws)
+posterior_stds = jax.tree.map(functools.partial(jnp.std, axis=0), draws)
+print(f"{posterior_means=}")
+print(f"{posterior_stds=}")
