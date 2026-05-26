@@ -67,14 +67,11 @@ pre_observation_infections = (
 
 ## defining everything using jax.scipy densities
 def log_posterior(params):
-    lp = 0.0
-    I0 = jnp.concatenate([pre_observation_infections, jnp.zeros(T)])
-    ks = jnp.arange(L, L + T)
-    
     # construct vectors mu and I iteratively
+    rt = jnp.exp(params["log_r"])
     def renewal_step(ts, k):
         history_I = jax.lax.dynamic_slice(ts, (k - S,), (S,))
-        I_k = jnp.exp(params["log_r"][k - L]) * jnp.dot(history_I, w_rev)
+        I_k = rt[k - L] * jnp.dot(history_I, w_rev)
         ts = ts.at[k].set(I_k)
 
         history_mu = jax.lax.dynamic_slice(ts, (k - D + 1,), (D,))
@@ -82,7 +79,11 @@ def log_posterior(params):
 
         return ts, (I_k, mu_t)
 
+    I0 = jnp.concatenate([pre_observation_infections, jnp.zeros(T)])
+    ks = jnp.arange(L, L + T)
     final_ts, (I, mu) = jax.lax.scan(renewal_step, I0, ks)
+
+    lp = 0.0
 
     ## likelihood   y ~ neg_binomial_2(mu, phi);
     ## we need to parameterize negative binomial in terms of mean, concentration
