@@ -65,16 +65,6 @@ pre_observation_infections = (
 )
 
 
-## To take advantage of JAX’s built-in serialization and optimization of PyTree
-## we construct a dictionary over all parameters
-params = {
-    "log_r": real(shape=y.shape[0]),
-    "alpha": positive(),   # should be lower > 0, upper < 1 "alpha": cont_0_1_excl(),
-    "inv_sqrt_phi": positive(),
-    "sigma_rw": positive(),
-}
-
-
 ## defining everything using jax.scipy densities
 def log_posterior(params):
     lp = 0.0
