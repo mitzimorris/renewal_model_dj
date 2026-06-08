@@ -26,10 +26,14 @@ import numpy as np
 import plotnine as p9
 import polars as pl
 import pandas as pd
-from cmdstanpy import CmdStanMCMC, CmdStanModel, format_stan_file
+from cmdstanpy import CmdStanMCMC, CmdStanModel, format_stan_file, install_cmdstan
 
 np.set_printoptions(suppress=True)
 pd.set_option('display.float_format', '{:.4f}'.format)
+```
+
+```{python}
+# install_cmdstan()
 ```
 
 ```{python}
@@ -98,9 +102,9 @@ def load_data(data_dir: Path, signal_name: str = "ed_visits") -> dict:
     observations = pl.read_csv(data_dir / params["signal_outputs"][signal_name])
 
     w: list[float] = params["generation_interval_pmf"]
-    pi: list[float] = signal["delay_pmf"]
+    delay: list[float] = signal["delay_pmf"]
     S = len(w)
-    D = len(pi)
+    D = len(delay)
     L = max(D, S)
     T = len(observations)
 
@@ -110,7 +114,7 @@ def load_data(data_dir: Path, signal_name: str = "ed_visits") -> dict:
         "D": D,
         "y": observations["observed_count"].to_list(),
         "w": w,
-        "pi": pi,
+        "pi": delay,
         "J": params["pre_observation_infections"][-L:],
         "rt0": params["true_rt"][0],
     	"i0_scale": 0.0005,
@@ -121,6 +125,9 @@ def load_data(data_dir: Path, signal_name: str = "ed_visits") -> dict:
 
 ```{python}
 stan_data_189 = load_data(Path("data/synth_hosp_ed_189"))
+```
+
+```{python}
 pl.DataFrame({"key": list(stan_data_189.keys()), "value": list(stan_data_189.values())}, strict=False)
 ```
 
@@ -178,40 +185,9 @@ fit_189_idata = from_cmdstanpy(
 az.summary(fit_189_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
 ```
 
+We plot the estimated daily Rt against the Rt values used to generate the synthetic daily observations.
+
 ```{python}
 plot_rt_posterior(fit_189_idata.posterior["r"], true_rt=stan_data_189["true_Rt"])
 ```
 
-```{python}
-cp_stan_file = Path("stan/simple_rw_3p.stan")
-cp = CmdStanModel(stan_file=cp_stan_file)
-```
-
-```{python}
-cp_189_fit = cp.sample(
-        data=stan_data_189,
-        chains=4,
-        parallel_chains=4,
-        seed=42,
-        iter_sampling=2000,
-    )
-```
-
-```{python}
-cp_189_idata = from_cmdstanpy(
-    posterior=cp_189_fit,
-    coords={"time": time_189},
-    dims={"r": ["time"],"log_r": ["time"]},
-    observed_data={
-        "ed_visits": np.asarray(stan_data_189["y"]),
-        "true_Rt": np.asarray(stan_data_189["true_Rt"]),
-    },
-)
-az.summary(cp_189_idata, var_names=["alpha", "phi", "sigma_rw", "r"])
-```
-
-We plot the estimated daily Rt against the Rt values used to generate the synthetic daily observations.
-
-```{python}
-plot_rt_posterior(cp_189_idata.posterior["r"], true_rt=stan_data_189["true_Rt"])
-```

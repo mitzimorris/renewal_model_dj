@@ -31,23 +31,19 @@ def simulate_regression(n=128, p=2, n_new=4, seed=145777):
     data = {
         "N": n, "P": p, "N_new": n_new, "x": x.tolist(),
 	"y": y.tolist(), "x_new": x_new.tolist(),
+    "true_alpha": alpha, "true_beta": beta,
     }
-    return parameters, data
+    return data
 
-params, data = simulate_regression()
+data = simulate_regression()
+
+print(f'true alpha{data["true_alpha"]}')
+print(f'true beta{data["true_beta"]}')
 
 x = jnp.array(data["x"])
 y = jnp.array(data["y"])
 x_new = jnp.array(data["x_new"])
 
-
-## To take advantage of JAX’s built-in serialization and optimization of PyTree
-## we construct a dictionary over all parameters which defines their shapes and dtypes.
-params = {
-    "alpha": real(),
-    "beta": real(shape=x.shape[1]),
-    "sigma": positive(),
-}
 
 ## defining everything using jax.scipy densities
 def log_posterior(params):

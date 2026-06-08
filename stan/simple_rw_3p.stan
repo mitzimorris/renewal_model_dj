@@ -34,15 +34,18 @@ parameters {
 }
 transformed parameters {
   real<lower=0> phi = inv(square(inv_sqrt_phi));
+  vector[T] r = exp(log_r);
 }
 model {
   vector[T] mu;
   vector[L + T] I;
-  vector[T] r = exp(log_r);
   I[1:L] = J;
-  for (t in 1:T) {
+  for (t in 1:T) {   // auto-regressive renewal process
     int lpt = L + t;
     I[lpt] = r[t] * dot_product(I[lpt - S:lpt - 1], w_rev);
+  }
+  for (t in 1:T) {   // observation process - convole infection with delay distribution
+    int lpt = L + t;
     mu[t] = alpha * dot_product(I[lpt - D + 1:lpt], pi_rev);
   }
   y ~ neg_binomial_2(mu, phi);
@@ -54,6 +57,3 @@ model {
   log_r[2:T] ~ normal(log_r[1:T-1], sigma_rw);  // RW1 prior on r
   sigma_rw ~ normal(0, 0.5);
 }
-generated quantities {
-  vector[T] r = exp(log_r);
-}  
